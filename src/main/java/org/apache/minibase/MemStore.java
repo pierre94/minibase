@@ -90,6 +90,7 @@ public class MemStore implements Closeable {
       // Step.1 memstore snpashot
       updateLock.writeLock().lock();
       try {
+        // 可写的就是kvMap,不可写的就是要刷盘的snapshot
         snapshot = kvMap;
         // TODO MemStoreIter may find the kvMap changed ? should synchronize ?
         kvMap = new ConcurrentSkipListMap<>();
