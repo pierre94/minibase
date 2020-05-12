@@ -113,3 +113,11 @@ KeyValue在MemStore和DiskFile中都是有序存放的，所以需要为KeyValue
 - 再比较op code (锦上添花,防止上游数据错乱发来一样的sequenceId？)
 
 ### 写入流程详细剖析
+构造一个kv结构，并加上一个自增的sequenceId.详见`MStore#put`
+```java
+  @Override
+  public void put(byte[] key, byte[] value) throws IOException {
+    this.memStore.add(KeyValue.createPut(key, value, sequenceId.incrementAndGet()));
+  }
+```
+ > (MiniBase是本地生成,HBase应该要有服务端生成吧)

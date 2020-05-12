@@ -49,9 +49,12 @@ public class MemStore implements Closeable {
     updateLock.readLock().lock();
     try {
       KeyValue prevKeyValue;
+      // ConcurrentSkipListMap特性 put后的返回值 the old value, or null if newly inserted
       if ((prevKeyValue = kvMap.put(kv, kv)) == null) {
+        // 之前kv不存在则直接加
         dataSize.addAndGet(kv.getSerializeSize());
       } else {
+        // 之前kv存在,需要计算差值
         dataSize.addAndGet(kv.getSerializeSize() - prevKeyValue.getSerializeSize());
       }
     } finally {
