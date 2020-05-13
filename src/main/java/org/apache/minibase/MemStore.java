@@ -45,6 +45,7 @@ public class MemStore implements Closeable {
   }
 
   public void add(KeyValue kv) throws IOException {
+    // add前需要阻塞flush
     flushIfNeeded(true);
     updateLock.readLock().lock();
     try {
@@ -54,7 +55,7 @@ public class MemStore implements Closeable {
         // 之前kv不存在则直接加
         dataSize.addAndGet(kv.getSerializeSize());
       } else {
-        // 之前kv存在,需要计算差值
+        // 之前kv存在,需要计算差值(可能有更新)
         dataSize.addAndGet(kv.getSerializeSize() - prevKeyValue.getSerializeSize());
       }
     } finally {
@@ -90,7 +91,7 @@ public class MemStore implements Closeable {
   private class FlusherTask implements Runnable {
     @Override
     public void run() {
-      // Step.1 memstore snpashot
+      // Step.1 memstore snapshot
       updateLock.writeLock().lock();
       try {
         // 可写的就是kvMap,不可写的就是要刷盘的snapshot

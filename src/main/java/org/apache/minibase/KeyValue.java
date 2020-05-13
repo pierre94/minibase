@@ -145,6 +145,7 @@ public class KeyValue implements Comparable<KeyValue> {
   }
 
   public int getSerializeSize() {
+    // 参考toBytes实现,序列化的结构分别是:key长度+value长度+key的内容+value内容
     return RAW_KEY_LEN_SIZE + VAL_LEN_SIZE + getRawKeyLen() + value.length;
   }
 

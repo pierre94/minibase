@@ -113,11 +113,69 @@ KeyValue在MemStore和DiskFile中都是有序存放的，所以需要为KeyValue
 - 再比较op code (锦上添花,防止上游数据错乱发来一样的sequenceId？)
 
 ### 写入流程详细剖析
-构造一个kv结构，并加上一个自增的sequenceId.详见`MStore#put`
+写入过程需要构造一个kv结构(put/delete)，并加上一个自增的sequenceId.详见`MStore#put`
 ```java
   @Override
   public void put(byte[] key, byte[] value) throws IOException {
     this.memStore.add(KeyValue.createPut(key, value, sequenceId.incrementAndGet()));
   }
 ```
- > (MiniBase是本地生成,HBase应该要有服务端生成吧)
+ > (MiniBase是本地生成,HBase应该要由服务端生成?)
+
+kv数据是写到kvMap中,其中kvMap就是ConcurrentSkipListMap结构。这里我们需要关注:
+- dataSize更新问题
+    由于ConcurrentSkipListMap在put进数据后会返回相同key的旧value,所以需要考虑一下dataSize的更新(当前MemStore内存占用字节数，用于判断是否达到Flush阈值)。
+- 锁
+    需要使用一个读写锁updateLock来控制写入操作和Flush操作的互斥
+
+这里详见:`MemStore#add`
+```java
+  public void add(KeyValue kv) throws IOException {
+    // add前需要阻塞flush
+    flushIfNeeded(true);
+    updateLock.readLock().lock();
+    try {
+      KeyValue prevKeyValue;
+      // ConcurrentSkipListMap特性 put后的返回值 the old value, or null if newly inserted
+      if ((prevKeyValue = kvMap.put(kv, kv)) == null) {
+        // 之前kv不存在则直接加
+        dataSize.addAndGet(kv.getSerializeSize());
+      } else {
+        // 之前kv存在,需要计算差值(可能有更新)
+        dataSize.addAndGet(kv.getSerializeSize() - prevKeyValue.getSerializeSize());
+      }
+    } finally {
+      updateLock.readLock().unlock();
+    }
+    flushIfNeeded(false);
+  }
+```
+写入MemStore后,当数据量达到一定阈值就要将flush到DiskStore
+
+### 读取流程详细剖析
+
+> 读取流程相对要复杂很多。
+
+我们需要从多个有序集合中读取数据:
+- MemStore
+    - MutableMemstore:kvMap
+    - ImmutableMemstore:snapshot
+- DiskStore:多个DiskFile
+
+在Scan的时候，需要把多个有序集合通过多路归并算法合并成一个有序集合，然后过滤掉不符合条件的版本，将正确的KV返回给用户。
+
+![](img/README_images/kv-read-list.png)
+以上图为例，我们要将上面7个KV数据再次处理得到最终的结果。
+
+对于同一个Key的不同版本，我们只关心最新的版本。假设用户读取时能看到的sequenceld≤101的数据，那么读取流程逻辑如下：
+- Key=A的版本
+    我们们只关注（A,Delete,100）这个版本，该版本是删除操作，说明后面所有key=A的版本都不会被用户看到。
+- Key=B的版本
+    我们只关心（B,Put,101）这个版本，该版本是Put操作，说明该Key没有被删除，可以被用户看到。
+- Key=C的版本
+    我们只关心（C,Put,95）这个版本，该版本是Put操作，说明该Key没有被删除，可以被用户看到。
+   
+对于全表扫描的scan操作，MiniBase将返回（B,Put,101）和（C,Put,95）这两个KeyValue给用户。
+
+详情见: `MStore#ScanIter`    
+

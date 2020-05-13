@@ -215,6 +215,7 @@ public class DiskStore implements Closeable {
       performCompact(filesToCompact);
     }
 
+    @Override
     public void run() {
       while (running) {
         try {
